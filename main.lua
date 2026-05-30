@@ -1,10 +1,19 @@
--- Zoom v1.1.1 standalone (no AlterraAPI dependency).
+-- Zoom for SN2. Press Z, world gets closer. Press Z again, normal.
+-- + or = while zoomed for tighter, - to back off. Numpad works too.
+--
+-- Toggle, not hold. UE4SS for SN2 doesn't expose key release events
+-- so I had to settle. If a future build lands key polling I'll redo it.
+
 local UEHelpers = require("UEHelpers")
 
 local CONFIG = {
     base_fov = 90.0, start_fov = 60.0, min_fov = 10.0, step = 5.0, ease = 0.12,
 }
 
+-- Stuff that gets hidden while zoomed. Hide first-person attached meshes
+-- and they stop scaling up at narrow FOV. DO NOT add "Scuba Mask Stencil"
+-- to this list, I tried, it leaves a blue square where your mask was.
+-- "Head" would also be a mistake (it's the player model, not the helmet).
 local HIDE_NAMES = {
     ["ScubaMaskSections"]    = true,
     ["ScubaMaskTopLeft"]     = true,
@@ -22,6 +31,8 @@ local hidden = {}
 local function get_pc()
     local pc = UEHelpers.GetPlayerController()
     if pc and pc:IsValid() then return pc end
+    -- Don't use FindFirstOf("PlayerController") here. Returns the wrong
+    -- controller sometimes (some lobby thing, not your local player).
 end
 
 local function get_pawn()
@@ -31,6 +42,9 @@ local function get_pawn()
     if p and p:IsValid() then return p end
 end
 
+-- The annoying part: SN2's camera tick overwrites LockedFOV every frame.
+-- Setting the field alone does nothing. ProcessConsoleExec("FOV X") flips
+-- an internal override flag that survives the tick. Belt and braces: do both.
 local function set_fov(fov)
     local pc = get_pc(); if not pc then return end
     pcall(function()
@@ -42,6 +56,9 @@ local function set_fov(fov)
     end)
 end
 
+-- pawn:ForEachComponent(nil, fn) errors with "UObject nullptr" in this
+-- UE4SS build. So we walk the AttachChildren tree by hand. Less elegant,
+-- doesn't crash.
 local function walk(comp, cb)
     if not comp or not comp:IsValid() then return end
     cb(comp)
@@ -76,6 +93,7 @@ local function show_things()
     hidden = {}
 end
 
+-- Tick: ease cur_fov toward target_fov.
 local last_t = os.clock()
 LoopAsync(0, function()
     local now = os.clock(); local dt = now - last_t; last_t = now
@@ -96,16 +114,22 @@ RegisterKeyBind(Key.Z, function()
     end
 end)
 
-RegisterKeyBind(Key.OEM_PLUS, function()
+local function zoom_in()
     if not zooming then return end
     target_fov = math.max(CONFIG.min_fov, target_fov - CONFIG.step)
     print(string.format("[Zoom] in -> %.0f", target_fov))
-end)
-
-RegisterKeyBind(Key.OEM_MINUS, function()
+end
+local function zoom_out()
     if not zooming then return end
     target_fov = math.min(CONFIG.base_fov, target_fov + CONFIG.step)
     print(string.format("[Zoom] out -> %.0f", target_fov))
-end)
+end
 
-print("[Zoom] loaded v1.1.1 standalone.")
+-- Top row keys (the ones next to backspace) and numpad. Bind both because
+-- people with full keyboards use numpad and laptop people don't have one.
+RegisterKeyBind(Key.OEM_PLUS,  zoom_in)
+RegisterKeyBind(Key.OEM_MINUS, zoom_out)
+RegisterKeyBind(Key.ADD,       zoom_in)
+RegisterKeyBind(Key.SUBTRACT,  zoom_out)
+
+print("[Zoom] loaded v1.1.2 standalone.")
