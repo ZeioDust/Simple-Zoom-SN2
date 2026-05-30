@@ -1,185 +1,111 @@
--- Zoom mod for SN2.
--- Tries to hook PlayerController:InputKey for true hold-to-zoom (Z down/up).
--- Falls back to toggle if the hook doesn't fire.
--- On first zoom, dumps every pawn component name so we can find the real
--- helmet/visor name to add to HELMET_HINTS.
+-- Zoom v1.1.1 standalone (no AlterraAPI dependency).
 local UEHelpers = require("UEHelpers")
 
-local BASE_FOV = 90.0
-local MIN_FOV = 10.0
-local START_FOV = 60.0
-local STEP = 5.0
-local EASE = 0.12
-
-local zooming = false
-local target_fov = BASE_FOV
-local cur_fov = BASE_FOV
-local last_log = 0
-local hidden_comps = {}
-local dumped_once = false
-
--- Only the 5 visible scuba mask sections. NOT "Scuba Mask Stencil" (used for
--- masking the underwater blue tint \xe2\x80\x94 hiding it leaves a blue square artifact).
--- NOT "Head" (that's the player model). NOT VolumeTracker (not a mesh).
-local HELMET_NAMES = {
-    ["ScubaMaskSections"] = true,
-    ["ScubaMaskTopLeft"] = true,
-    ["ScubaMaskTopRight"] = true,
-    ["ScubaMaskNose"] = true,
-    ["ScubaMaskBottomLeft"] = true,
-    ["ScubaMaskBottomRight"] = true,
+local CONFIG = {
+    base_fov = 90.0, start_fov = 60.0, min_fov = 10.0, step = 5.0, ease = 0.12,
 }
 
-local function lower(s) return string.lower(tostring(s or "")) end
+local HIDE_NAMES = {
+    ["ScubaMaskSections"]    = true,
+    ["ScubaMaskTopLeft"]     = true,
+    ["ScubaMaskTopRight"]    = true,
+    ["ScubaMaskNose"]        = true,
+    ["ScubaMaskBottomLeft"]  = true,
+    ["ScubaMaskBottomRight"] = true,
+    ["Hands"]                = true,
+    ["EquippedMesh"]         = true,
+}
 
-local function looks_like_helmet(name)
-    return HELMET_NAMES[tostring(name)] == true
+local zooming, target_fov, cur_fov = false, CONFIG.base_fov, CONFIG.base_fov
+local hidden = {}
+
+local function get_pc()
+    local pc = UEHelpers.GetPlayerController()
+    if pc and pc:IsValid() then return pc end
 end
 
 local function get_pawn()
-    local pc = UEHelpers.GetPlayerController()
-    if not pc or not pc:IsValid() then return nil end
-    local pawn = pc.Pawn
-    if not pawn or not pawn:IsValid() then return nil end
-    return pawn
+    local pc = get_pc()
+    if not pc then return end
+    local p = pc.Pawn
+    if p and p:IsValid() then return p end
 end
 
--- Walk RootComponent's attach tree to enumerate all scene components.
-local function walk(comp, depth, cb)
-    if not comp or not comp:IsValid() then return end
-    cb(comp, depth)
-    pcall(function()
-        local children = comp.AttachChildren
-        if children then
-            local n = #children
-            for i = 1, n do
-                local child = children[i]
-                if child then walk(child, depth + 1, cb) end
-            end
-        end
-    end)
-end
-
-local function dump_components()
-    if dumped_once then return end
-    dumped_once = true
-    local pawn = get_pawn()
-    if not pawn then print("[Zoom] DUMP: no pawn"); return end
-    print("[Zoom] ===== PAWN COMPONENTS =====")
-    print("[Zoom] pawn class: " .. pawn:GetClass():GetFName():ToString())
-    walk(pawn.RootComponent, 0, function(comp, d)
-        pcall(function()
-            local n = comp:GetFName():ToString()
-            local cls = comp:GetClass():GetFName():ToString()
-            print(string.format("[Zoom] %s%s  (%s)", string.rep("  ", d), n, cls))
-        end)
-    end)
-    print("[Zoom] ===== END COMPONENTS =====")
-end
-
-local function hide_helmet()
-    if #hidden_comps > 0 then return end
-    local pawn = get_pawn()
-    if not pawn then return end
-    walk(pawn.RootComponent, 0, function(comp, _)
-        pcall(function()
-            local n = comp:GetFName():ToString()
-            if looks_like_helmet(n) then
-                comp:SetVisibility(false, false)
-                table.insert(hidden_comps, comp)
-                print("[Zoom] hidden: " .. n)
-            end
-        end)
-    end)
-end
-
-local function show_helmet()
-    for _, comp in ipairs(hidden_comps) do
-        pcall(function()
-            if comp:IsValid() then comp:SetVisibility(true, false) end
-        end)
-    end
-    hidden_comps = {}
-end
-
-local function apply(fov)
-    local pc = UEHelpers.GetPlayerController()
-    if not pc or not pc:IsValid() then return end
+local function set_fov(fov)
+    local pc = get_pc(); if not pc then return end
     pcall(function()
         local cm = pc.PlayerCameraManager
         if cm and cm:IsValid() then
-            cm.DefaultFOV = fov
-            cm.LockedFOV = fov
-            pcall(function() cm:SetFOV(fov) end)
+            cm.DefaultFOV = fov; cm.LockedFOV = fov
         end
         pc:ProcessConsoleExec("FOV " .. string.format("%.0f", fov), nil, pc)
     end)
 end
 
-local function start_zoom()
-    if zooming then return end
-    zooming = true
-    target_fov = START_FOV
-    dump_components()
-    hide_helmet()
-    print("[Zoom] ON")
-end
-
-local function stop_zoom()
-    if not zooming then return end
-    zooming = false
-    target_fov = BASE_FOV
-    show_helmet()
-    print("[Zoom] OFF")
-end
-
--- Try to hook PlayerController:InputKey for real hold/release.
--- Sig: InputKey(FInputKeyEventArgs) or older (Key, EventType, AmountDepressed, bGamepad)
--- We just observe and check key name + event type. EventType: 0=Pressed, 1=Released.
-local hook_fired = false
-pcall(function()
-    RegisterHook("/Script/Engine.PlayerController:InputKey", function(ctx, args, event_arg3, event_arg4)
-        hook_fired = true
-        -- We can't easily inspect FKey/FInputKeyEventArgs reliably across UE versions,
-        -- so just dump on first fire to see what we get.
-        -- If we can't read it, this hook is useless and toggle is the only option.
+local function walk(comp, cb)
+    if not comp or not comp:IsValid() then return end
+    cb(comp)
+    pcall(function()
+        local children = comp.AttachChildren
+        if children then
+            for i = 1, #children do
+                local c = children[i]; if c then walk(c, cb) end
+            end
+        end
     end)
-end)
+end
 
-local last = os.clock()
-LoopAsync(0, function()
-    local now = os.clock()
-    local dt = now - last
-    last = now
+local function hide_things()
+    if #hidden > 0 then return end
+    local pawn = get_pawn(); if not pawn then return end
+    walk(pawn.RootComponent, function(c)
+        pcall(function()
+            local n = c:GetFName():ToString()
+            if HIDE_NAMES[n] then
+                c:SetVisibility(false, false)
+                table.insert(hidden, c)
+            end
+        end)
+    end)
+end
 
-    if math.abs(cur_fov - target_fov) > 0.1 then
-        cur_fov = cur_fov + (target_fov - cur_fov) * math.min(1.0, dt / EASE)
-        apply(cur_fov)
+local function show_things()
+    for _, c in ipairs(hidden) do
+        pcall(function() if c:IsValid() then c:SetVisibility(true, false) end end)
     end
+    hidden = {}
+end
 
-    if zooming and now - last_log > 0.5 then
-        print(string.format("[Zoom] FOV=%.1f -> %.1f", cur_fov, target_fov))
-        last_log = now
+local last_t = os.clock()
+LoopAsync(0, function()
+    local now = os.clock(); local dt = now - last_t; last_t = now
+    if math.abs(cur_fov - target_fov) > 0.1 then
+        cur_fov = cur_fov + (target_fov - cur_fov) * math.min(1.0, dt / CONFIG.ease)
+        set_fov(cur_fov)
     end
     return false
 end)
 
--- Z = toggle (only reliable input method available)
 RegisterKeyBind(Key.Z, function()
-    if zooming then stop_zoom() else start_zoom() end
+    if zooming then
+        zooming = false; target_fov = CONFIG.base_fov; show_things()
+        print("[Zoom] OFF")
+    else
+        zooming = true; target_fov = CONFIG.start_fov; hide_things()
+        print("[Zoom] ON")
+    end
 end)
 
 RegisterKeyBind(Key.OEM_PLUS, function()
     if not zooming then return end
-    target_fov = math.max(MIN_FOV, target_fov - STEP)
-    print(string.format("[Zoom] zoom in  -> FOV %.0f", target_fov))
+    target_fov = math.max(CONFIG.min_fov, target_fov - CONFIG.step)
+    print(string.format("[Zoom] in -> %.0f", target_fov))
 end)
 
 RegisterKeyBind(Key.OEM_MINUS, function()
     if not zooming then return end
-    target_fov = math.min(START_FOV, target_fov + STEP)
-    print(string.format("[Zoom] zoom out -> FOV %.0f", target_fov))
+    target_fov = math.min(CONFIG.base_fov, target_fov + CONFIG.step)
+    print(string.format("[Zoom] out -> %.0f", target_fov))
 end)
 
-print("[Zoom] loaded. Z = toggle zoom. +/- = adjust while zoomed.")
-print("[Zoom] On first zoom, component names will be dumped \xe2\x80\x94 paste them back.")
+print("[Zoom] loaded v1.1.1 standalone.")
