@@ -1,48 +1,65 @@
-Zoom v1.1.2 for Subnautica 2
+Zoom for Subnautica 2 — v1.1.3
 
-What it does
-------------
-Press Z to zoom in, Z again to zoom out.
-Press + or = while zoomed to zoom further (down to FOV 10).
-Press - while zoomed to zoom back out (up to FOV 90).
-Numpad + and - work too.
+I kept swimming halfway across a biome to find out the blob was a rock,
+not a fish. So I made this.
 
-Hides your scuba mask, hands, and equipped tool while zoomed
-so nothing scales weirdly at narrow FOV.
+Press Z. World gets closer. Press Z again, back to normal. While you're
+zoomed, hit + or = to crank it tighter (down to FOV 10). Hit - to back
+it off. Numpad works too if that's your thing.
+
+Your hands, the scuba mask, and whatever tool you're holding all get
+hidden while zoomed. Otherwise they balloon up at narrow FOV and it
+looks awful. Yes I tried not hiding them. It was awful.
+
 
 Install
 -------
-1. Install UE4SS for SN2 first:
+You need UE4SS for SN2 first. The community fork, not the regular one
+(regular one's scan fails on SN2 right now):
    https://github.com/Subnautica2Modding/Subnautica2-UE4SS
 
-2. Drop the Zoom folder into:
-   <Steam>/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64/ue4ss/Mods/
+Then drop the Zoom folder into:
+   <your Steam>/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64/ue4ss/Mods/
 
-3. Open ue4ss/Mods/mods.txt in any text editor.
-   Add this line above the "Keybinds : 1" line:
-     Zoom : 1
+Open mods.txt in that same Mods folder. Add a line that says
+   Zoom : 1
+above the Keybinds line.
 
-4. Launch the game. If the UE4SS console prints
-   "[Zoom] loaded v1.1.2 standalone", you're in.
+Launch. If UE4SS console says "[Zoom] loaded v1.1.3 standalone" you're
+good.
 
-Config
-------
-Open Scripts/main.lua. Top of the file:
-  start_fov  - what zoom jumps to on Z press (default 60)
-  min_fov    - how far + can crank it (default 10)
-  step       - FOV change per +/- press (default 5)
-  ease       - transition smoothness (default 0.12s)
 
-Known issues
-------------
-- Hold-to-zoom isn't possible in this UE4SS build.
-  Toggle only.
-- If FOV stays stuck after you die or ragdoll, tap Z twice
-  to clear it.
-- Component names in HIDE_NAMES are hardcoded for the
-  current SN2 build. If a patch renames them, edit the
-  list at the top of main.lua.
+About the toggle
+----------------
+I wanted hold-to-zoom. Press and hold Z, world close, let go, world
+normal. Couldn't get it. UE4SS for SN2 doesn't expose key release
+events — RegisterKeyBind only knows about presses. I tried hooking
+PlayerController:InputKey. Didn't fire. Other SN2 FOV mods landed
+on toggle for the same reason.
 
-License
--------
-MIT. Take it, fork it, do whatever.
+If a future UE4SS lands key polling I'll switch this to hold.
+
+
+Tweaking it
+-----------
+Top of Scripts/main.lua there's a CONFIG table:
+   start_fov   what zoom jumps to (60)
+   min_fov     how far + goes (10)
+   step        how much each press changes (5)
+   ease        seconds to ease in/out (0.12)
+
+Edit, save, restart the game. There's no hot reload here.
+
+
+Stuff that's a bit broken
+-------------------------
+If you die or ragdoll while zoomed the FOV can stick. Tap Z twice to
+clear it. I'd fix this properly but it's rare enough that I haven't.
+
+The component names I hide are hardcoded — ScubaMaskTopLeft and friends.
+If Unknown Worlds renames them in a patch the hide list breaks (mod
+keeps working, you just see weird stuff). Open Scripts/main.lua, find
+HIDE_NAMES at the top, replace the names. Pretty obvious.
+
+
+MIT license. Fork it, ship your own.
